@@ -5,4 +5,4 @@
 ## Installation
 This code has been tested with Python=3.8, TensorFlow=2.4.0 and CUDA=11.4
 
-* Please follow the requirment.txt
+* Codes on core contributions such as the LACV module, the C-VLAD module and the aggregation loss function have been uploaded, and the full code will be uploaded has been coming soon.
