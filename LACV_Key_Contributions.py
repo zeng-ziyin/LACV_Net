@@ -1,4 +1,56 @@
     ##############################
+    ##########   LAFA   ##########
+    ##############################
+
+    def building_LAFA_module(self, xyzrgb, feature, neigh_idx, d_out, name, is_training):
+        d_in = feature.get_shape()[-1].value
+        f_xyzrgb = self.loc_info_encoding_unit(xyz, neigh_idx)
+        
+        f_xyzrgb = helper_tf_util.conv2d(f_xyzrgb, d_in, [1, 1], name + "mlp1", [1, 1], "VALID", True, is_training)
+        f_neighbours = self.loc_info_encoding_unit(tf.squeeze(feature, axis=2), neigh_idx)
+        f_concat = tf.concat([f_neighbours, f_xyzrgb], axis=-1)
+        f_loc_adap, _ = self.adap_aug_unit(f_concat, d_out // 2, name + "adap_aug_1", is_training)
+
+        f_xyzrgb = helper_tf_util.conv2d(f_xyzrgb, d_out // 2, [1, 1], name + "mlp2", [1, 1], "VALID", True, is_training)
+        f_neighbours = self.loc_info_encoding_unit(tf.squeeze(f_pc_agg, axis=2), neigh_idx)
+        f_concat = tf.concat([f_neighbours, f_xyzrgb], axis=-1)
+        f_loc_adap, f_weighted = self.adap_aug_unit(f_concat, d_out, name + "adap_aug_2", is_training)
+        
+        neigh = self.gather_neighbour(tf.squeeze(feature, axis=2), neigh_idx)
+        neigh = neigh + f_weighted
+        return f_loc_adap, neigh
+
+    def loc_info_encoding_unit(self, x, neigh_idx):
+        tile_x = tf.tile(tf.expand_dims(x, axis=2), [1, 1, tf.shape(neigh_idx)[-1], 1])  # B, N, k, d_in
+        neigh_x = self.gather_neighbour(x, neigh_idx)  # B, N, k, d_in
+        x_info = tile_f - neigh_f
+        return x_info  # B, N, k, d_in
+
+    @staticmethod
+    def gather_neighbour(pc, neighbor_idx):
+        # gather the coordinates or features of neighboring points
+        batch_size = tf.shape(pc)[0]
+        num_points = tf.shape(pc)[1]
+        d = pc.get_shape()[2].value
+        index_input = tf.reshape(neighbor_idx, shape=[batch_size, -1])
+        features = tf.batch_gather(pc, index_input)
+        features = tf.reshape(features, [batch_size, num_points, tf.shape(neighbor_idx)[-1], d])
+        return features
+
+    @staticmethod
+    def adap_aug_unit(feature, d_out, name, is_training):
+        k_weights = helper_tf_util.conv2d(feature, feature.get_shape()[-1].value, [1, 1], name + 'weight', [1, 1], 'VALID', bn=False, activation_fn=None)
+        k_weights = tf.nn.softmax(k_weights, axis=2)
+        f_max = tf.reduce_max(feature, axis=-2, keepdims=True)
+        f_weighted = feature * k_weights
+        f_adap = tf.reduce_sum(f_weighted, axis=-2, keepdims=True)
+        f_agg = tf.concat([f_max, f_adap], axis=-1)
+        f_agg = helper_tf_util.conv2d(f_adap, d_out, [1, 1], name + 'mlp', [1, 1], 'VALID', True, is_training)
+        return f_agg, f_weighted
+
+
+
+    ##############################
     #########   C-VLAD   #########
     ##############################
 
@@ -60,58 +112,6 @@
             initializer=tf.random_normal_initializer(stddev=1. / math.sqrt(clus_num)))
         vlad = tf.matmul(vlad, hidden1_weights)
         return vlad
-
-
-
-    ##############################
-    ##########   LAFA   ##########
-    ##############################
-
-    def building_LAFA_module(self, xyzrgb, feature, neigh_idx, d_out, name, is_training):
-        d_in = feature.get_shape()[-1].value
-        f_xyzrgb = self.loc_info_encoding_unit(xyz, neigh_idx)
-        
-        f_xyzrgb = helper_tf_util.conv2d(f_xyzrgb, d_in, [1, 1], name + "mlp1", [1, 1], "VALID", True, is_training)
-        f_neighbours = self.loc_info_encoding_unit(tf.squeeze(feature, axis=2), neigh_idx)
-        f_concat = tf.concat([f_neighbours, f_xyzrgb], axis=-1)
-        f_pc_agg, _ = self.adap_aug_unit(f_concat, d_out // 2, name + "att_pooling_1", is_training)
-
-        f_xyzrgb = helper_tf_util.conv2d(f_xyzrgb, d_out // 2, [1, 1], name + "mlp2", [1, 1], "VALID", True, is_training)
-        f_neighbours = self.loc_info_encoding_unit(tf.squeeze(f_pc_agg, axis=2), neigh_idx)
-        f_concat = tf.concat([f_neighbours, f_xyzrgb], axis=-1)
-        f_pc_agg, f_weighted = self.adap_aug_unit(f_concat, d_out, name + "att_pooling_2", is_training)
-        
-        neigh = self.gather_neighbour(tf.squeeze(feature, axis=2), neigh_idx)
-        neigh = neigh + f_weighted
-        return f_pc_agg, neigh
-
-    def loc_info_encoding_unit(self, x, neigh_idx):
-        tile_x = tf.tile(tf.expand_dims(x, axis=2), [1, 1, tf.shape(neigh_idx)[-1], 1])  # B, N, k, d_in
-        neigh_x = self.gather_neighbour(x, neigh_idx)  # B, N, k, d_in
-        x_info = tile_f - neigh_f
-        return x_info  # B, N, k, d_in
-
-    @staticmethod
-    def gather_neighbour(pc, neighbor_idx):
-        # gather the coordinates or features of neighboring points
-        batch_size = tf.shape(pc)[0]
-        num_points = tf.shape(pc)[1]
-        d = pc.get_shape()[2].value
-        index_input = tf.reshape(neighbor_idx, shape=[batch_size, -1])
-        features = tf.batch_gather(pc, index_input)
-        features = tf.reshape(features, [batch_size, num_points, tf.shape(neighbor_idx)[-1], d])
-        return features
-
-    @staticmethod
-    def adap_aug_unit(feature, d_out, name, is_training):
-        k_weights = helper_tf_util.conv2d(feature, feature.get_shape()[-1].value, [1, 1], name + 'weight', [1, 1], 'VALID', bn=False, activation_fn=None)
-        k_weights = tf.nn.softmax(k_weights, axis=2)
-        f_max = tf.reduce_max(feature, axis=-2, keepdims=True)
-        f_weighted = feature * k_weights
-        f_adap = tf.reduce_sum(f_weighted, axis=-2, keepdims=True)
-        f_agg = tf.concat([f_max, f_adap], axis=-1)
-        f_agg = helper_tf_util.conv2d(f_adap, d_out, [1, 1], name + 'mlp', [1, 1], 'VALID', True, is_training)
-        return f_agg, f_weighted
 
 
 
